@@ -2,7 +2,80 @@
 import requests
 from bs4 import  BeautifulSoup
 import pandas as pd
-import time
+# import akshare as ak
+from Crypto.Cipher import AES
+from Crypto.Util.Padding import pad, unpad
+from Crypto.Random import get_random_bytes
+import re
+import json
+
+import base64
+
+def add_to_16(value):
+    return str.encode(value, 'utf-8')
+
+# 加密函数
+def aes_encrypt(text, key):
+    # 创建AES cipher对象
+    cipher  = AES.new(add_to_16(key), AES.MODE_ECB)
+    # 加密并添加padding
+    padded_data = pad(add_to_16(text), AES.block_size)
+
+    encrypted = cipher.encrypt(padded_data)
+    return encrypted.hex()
+
+def get_jisilu_key():
+    # 先获取登录页面获取必要token/cookie
+    login_page = requests.get('https://www.jisilu.cn/account/login/')
+
+    pattern = r"var key = '(.*?)';"
+    match = re.search(pattern, login_page.text)
+
+    if match:
+        return match.group(1)
+    else:
+        return '397151C04723421F'
+def get_jisilu_session():
+    session = requests.Session()
+
+    key = get_jisilu_key()
+
+    login_data = {
+        'user_name': aes_encrypt('', key),
+        'password': aes_encrypt('', key),
+        'aes': 1,
+        'auto_login': 0
+    }
+
+
+    response = session.post('https://www.jisilu.cn/webapi/account/login_process/', data=login_data)
+    print(response.text)  # 查看登录是否成功
+    return session
+
+def get_kzz_code_from_jisilu(session):
+    # 可转债列表
+    list = session.get('https://www.jisilu.cn/webapi/cb/list/')
+    # 退市可转债列表
+    delisted = session.get('https://www.jisilu.cn/webapi/cb/delisted/')
+    print(list.json)
+    list_object = json.loads(list.text)
+    delisted_object = json.loads(delisted.text)
+    result = []
+    threshold = 11 / 100.0
+    for stock in list_object['data']:
+        try:
+            result.append(stock['bond_id'])
+        except (KeyError, ValueError):
+            # 如果数据缺失或格式错误，跳过该股票
+            continue
+
+    for stock in delisted_object['data']:
+        try:
+            result.append(stock['bond_id'])
+        except (KeyError, ValueError):
+            # 如果数据缺失或格式错误，跳过该股票
+            continue
+    return result
 
 
 def get_cbond_data():
@@ -28,37 +101,38 @@ def get_cbond_data():
 
         stocks = response.json()
 
-        df = pd.DataFrame(stocks)
-        columns_mapping = {
-            "symbol": "代码",
-            "name": "名称",
-            "trade": "最新价",
-            "pricechange": "涨跌额",
-            "changepercent": "涨跌幅(%)",
-            "buy": "买入价",
-            "sell": "卖出价",
-            "settlement": "昨日收盘价",
-            "open": "今日开盘价",
-            "high": "最高价",
-            "low": "最低价",
-            "volume": "成交量(手)",
-            "amount": "成交额(万)",
-            "ticktime": "更新时间"
-        }
-
-        df = df[list(columns_mapping.keys())]
-        df = df.rename(columns=columns_mapping)
-
-        df["日期"] = pd.to_datetime("today").strftime("%Y-%m-%d")
+        # df = pd.DataFrame(stocks)
+        # columns_mapping = {
+        #     "symbol": "代码",
+        #     "name": "名称",
+        #     "trade": "最新价",
+        #     "pricechange": "涨跌额",
+        #     "changepercent": "涨跌幅(%)",
+        #     "buy": "买入价",
+        #     "sell": "卖出价",
+        #     "settlement": "昨日收盘价",
+        #     "open": "今日开盘价",
+        #     "high": "最高价",
+        #     "low": "最低价",
+        #     "volume": "成交量(手)",
+        #     "amount": "成交额(万)",
+        #     "ticktime": "更新时间"
+        # }
+        #
+        # df = df[list(columns_mapping.keys())]
+        # df = df.rename(columns=columns_mapping)
+        #
+        # df["日期"] = pd.to_datetime("today").strftime("%Y-%m-%d")
 
         result = []
-        threshold = 15 / 100.0
-
+        threshold = 11 / 100.0
         for stock in stocks:
             try:
                 low = float(stock['low'])
-                settlement = float(stock['settlement'])
-                if low > 0 and low < settlement * (1 - threshold):
+                changepercent = float(stock['changepercent'])
+                settlement = (float(stock['settlement']) + float(stock['trade'])) / 2
+
+                if low > 0 and changepercent <10 and changepercent > -10 and low < settlement * (1 - threshold):
                     result.append(stock)
             except (KeyError, ValueError):
                 # 如果数据缺失或格式错误，跳过该股票
@@ -123,20 +197,24 @@ def fetch_cb_daily_kline(stock_code):
         print(f"数据解析失败: {e}")
         return None
 
-
-# 示例：获取浦发转债（110059）的日K线数据
-if __name__ == "__main__":
-    stock_code = "110059"  # 可转债代码
-    kline_data = fetch_cb_daily_kline(stock_code)
-
-    if kline_data is not None:
-        print(f"可转债 {stock_code} 的日K线数据（最近5条）：")
-        print(kline_data.tail())  # 显示最近5天的数据
-
-result_data = get_cbond_data()
-
-if result_data is not None:
-    print(result_data)
-else:
-    print("未能获取可转债插针数据")
+session = get_jisilu_session()
+kzz_id = get_kzz_code_from_jisilu(session)
+print(kzz_id)
+# bond_zh_cov_df = ak.bond_zh_cov()
+# print(bond_zh_cov_df)
+# # 示例：获取浦发转债（110059）的日K线数据
+# if __name__ == "__main__":
+#     stock_code = "110059"  # 可转债代码
+#     kline_data = fetch_cb_daily_kline(stock_code)
+#
+#     if kline_data is not None:
+#         print(f"可转债 {stock_code} 的日K线数据（最近5条）：")
+#         print(kline_data.tail())  # 显示最近5天的数据
+#
+# result_data = get_cbond_data()
+#
+# if result_data is not None:
+#     print(result_data)
+# else:
+#     print("未能获取可转债插针数据")
 
