@@ -56,10 +56,11 @@ def get_cbond_data():
         for stock in stocks:
             try:
                 low = float(stock['low'])
+                high = float(stock['high'])
                 changepercent = float(stock['changepercent'])
-                settlement = (float(stock['settlement']) + float(stock['trade'])) / 2
+                adv = (float(stock['settlement']) + float(stock['trade'])) / 2
 
-                if low > 0 and changepercent <10 and changepercent > -10 and low < settlement * (1 - threshold):
+                if low > 0 and 10 > changepercent > -10 and (low < adv * (1 - threshold) or high > adv * (1 + threshold)):
                     result.append(stock)
             except (KeyError, ValueError):
                 # 如果数据缺失或格式错误，跳过该股票
